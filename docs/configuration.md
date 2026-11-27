@@ -26,15 +26,40 @@ https://api.day.app/<你的key>/测试/这是一条测试推送
 postgresql://用户名:密码@主机:端口/数据库名
 ```
 
-**容器部署时不要写 `127.0.0.1`**——那是容器自己。应写 TeslaMate 的 compose 服务名，例如：
+#### 从哪里获取
+
+**最省事的办法**：运行 `./scripts/install-existing.sh --dry-run`，它会自动探测并打印（密码已打码）：
 
 ```
-postgresql://teslamate:password@database:5432/teslamate
+TESLAMATE_DATABASE_URL=postgresql://teslamate:***@database:5432/teslamate
 ```
 
-如果 TeslaMate 与本服务不在同一个 compose 项目，需要把它们接到同一个 Docker 网络，或使用宿主机的内网地址。
+**手工拼**：三个部分分别来自 TeslaMate 的 compose 文件
 
-建议用只读账号，见 [SECURITY.md](../SECURITY.md)。
+```yaml
+environment:
+  - POSTGRES_USER=teslamate      # → 用户名
+  - POSTGRES_PASSWORD=xxxxx      # → 密码
+  - POSTGRES_DB=teslamate        # → 数据库名
+```
+
+主机填**数据库的 compose 服务名**（通常是 `database`），端口 `5432`。
+
+**实在不知道密码**：直接从容器里读
+
+```bash
+docker inspect <数据库容器名> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep POSTGRES_
+```
+
+#### 两个常见坑
+
+**不要写 `127.0.0.1`。** 在容器里 `127.0.0.1` 指的是容器自己，连不上数据库。要用服务名，或者宿主机内网 IP。
+
+**TeslaMate 的数据库通常没有映射到宿主机端口。** 所以从宿主机上的普通进程连不上，必须让本服务也加入同一个 Docker 网络（`docker-compose.existing.yml` 已经处理了这一点）。
+
+#### 权限建议
+
+建议为本服务单独建只读账号，而不是直接用 `teslamate` 超级用户，见 [SECURITY.md](../SECURITY.md)。
 
 ## 连接
 

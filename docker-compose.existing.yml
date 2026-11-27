@@ -1,0 +1,22 @@
+# 已装 TeslaMate 的用户用这份文件：把本服务接入 TeslaMate 已有的 Docker 网络。
+# 由 scripts/install-existing.sh 自动生成 .env 并调用，一般不需要手改。
+services:
+  teslamate-bark:
+    build: .
+    image: teslamate-bark:local
+    container_name: teslamate-bark
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - bark-data:/data
+    networks:
+      - teslamate
+
+volumes:
+  bark-data:
+
+networks:
+  teslamate:
+    external: true
+    # .env 里的 TESLAMATE_NETWORK 由安装脚本探测写入
+    name: ${TESLAMATE_NETWORK:-teslamate_default}

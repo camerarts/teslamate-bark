@@ -75,7 +75,46 @@ TeslaMate 数据很全，但你不会一直盯着 Grafana 看。真正需要在�
 1. 已经跑起来的 TeslaMate（含 PostgreSQL 与 Mosquitto）
 2. 手机装了 [Bark](https://apps.apple.com/app/bark-customed-notifications/id1403753865)，拿到推送 key
 
-### 方式一：Docker（推荐）
+### 方式一：已有 TeslaMate，一条命令（推荐）
+
+如果你机器上已经有 TeslaMate 在跑，不需要手工拼连接串：
+
+```bash
+git clone https://github.com/camerarts/teslamate-bark.git
+cd teslamate-bark
+./scripts/install-existing.sh
+```
+
+脚本会自动完成这些事：
+
+- 找到正在运行的 TeslaMate 容器，读取它所在的 Docker 网络
+- 从 PostgreSQL 容器里读出 `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`，拼好连接串
+- 从 TeslaMate 的环境变量读出 MQTT 主机
+- **实际连一次数据库验证**，失败当场提示而不是让你事后排查
+- 询问 Bark key 后写入 `.env`（权限 `600`）
+- 用 `docker-compose.existing.yml` 接入 TeslaMate 的现有网络并启动
+
+只想看探测结果、不写文件不启动：
+
+```bash
+./scripts/install-existing.sh --dry-run
+```
+
+输出形如：
+
+```
+探测结果：
+  TeslaMate 容器   teslamate-1
+  compose 项目     teslamate
+  Docker 网络      teslamate_default
+  数据库           database:5432/teslamate（用户 teslamate）
+  MQTT             mqtt://mosquitto:1883
+
+验证数据库连通性…
+  连接成功
+```
+
+### 方式二：从零部署（Docker）
 
 ```bash
 git clone https://github.com/camerarts/teslamate-bark.git
@@ -90,7 +129,7 @@ docker compose logs -f
 
 如果 TeslaMate 和本服务在同一个 compose 项目里，把 `docker-compose.yml` 末尾的 `networks` 注释打开，并把 `.env` 里的主机名改成服务名（如 `database`、`mosquitto`）。
 
-### 方式二：直接跑 Node
+### 方式三：直接跑 Node
 
 ```bash
 npm install

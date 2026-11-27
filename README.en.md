@@ -70,7 +70,32 @@ Because of this, restarts and MQTT gaps don't lose events: the database poller c
 
 ## Quick start
 
-### Docker (recommended)
+### Already running TeslaMate? One command
+
+No need to assemble the connection string by hand:
+
+```bash
+git clone https://github.com/camerarts/teslamate-bark.git
+cd teslamate-bark
+./scripts/install-existing.sh
+```
+
+The script will:
+
+- locate the running TeslaMate container and its Docker network
+- read `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` from the database container
+- read the MQTT host from TeslaMate's environment
+- **verify the database connection** before continuing
+- ask for your Bark key, then write `.env` with `600` permissions
+- start the service attached to the existing network via `docker-compose.existing.yml`
+
+Preview without writing or starting anything:
+
+```bash
+./scripts/install-existing.sh --dry-run
+```
+
+### From scratch (Docker)
 
 ```bash
 git clone https://github.com/camerarts/teslamate-bark.git
