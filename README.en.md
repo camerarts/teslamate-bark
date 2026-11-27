@@ -73,7 +73,7 @@ Because of this, restarts and MQTT gaps don't lose events: the database poller c
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/<your-name>/teslamate-bark.git
+git clone https://github.com/camerarts/teslamate-bark.git
 cd teslamate-bark
 
 cp .env.example .env

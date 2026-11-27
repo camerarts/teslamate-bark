@@ -78,7 +78,7 @@ TeslaMate 数据很全，但你不会一直盯着 Grafana 看。真正需要在�
 ### 方式一：Docker（推荐）
 
 ```bash
-git clone https://github.com/<你的用户名>/teslamate-bark.git
+git clone https://github.com/camerarts/teslamate-bark.git
 cd teslamate-bark
 
 cp .env.example .env
