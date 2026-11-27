@@ -174,7 +174,9 @@ async function checkUnlocked() {
   if (state.sent?.[key]) return;
 
   const pulse = await getVehiclePulse().catch(() => null);
-  await sendUnlockedAlert({ ...alert, at_home: Boolean(pulse?.at_home) }, key);
+  // 传 drive_id 而不是 state 键：sendUnlockedAlert 内部会补 `unlocked:` 前缀，
+  // 否则 Bark 侧的去重键会变成 unlocked:unlocked:<id>。
+  await sendUnlockedAlert({ ...alert, at_home: Boolean(pulse?.at_home) }, String(parking.drive_id));
   await markScheduledPush(key);
   log(`unlocked alert sent drive=${parking.drive_id} parked=${alert.parked_minutes}min`);
 }

@@ -13,6 +13,8 @@
   判断依据：锁车后车辆约 15 分钟内进入休眠，未锁车会一直保持唤醒
 - `unlockedAlertFor()` 纯函数与对应单测，阈值可配置
 - 修正 `sendTpmsAlert` 的 key 传参（此前传了对象，去重键会变成 `[object Object]`）
+- 修正未锁提醒的 Bark 去重键重复前缀（`unlocked:unlocked:<id>`）
+- README / README.en 补上未锁提醒与 `UNLOCK_ALERT_MINUTES`、`ENSURE_INDEXES` 说明
 
 ### 原理与误报
 

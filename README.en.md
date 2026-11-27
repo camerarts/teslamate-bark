@@ -37,6 +37,7 @@ This service only does that: **subscribe to TeslaMate events, turn them into rea
 | Unlocked while in sentry | Lock goes locked → unlocked | Time-sensitive + alarm |
 | Low tire pressure | Any tire below threshold (default 2.6 bar) | Active |
 | Low battery, not charging | Evening, parked at home, below threshold | Time-sensitive |
+| Possibly left unlocked | Parked 30+ min and still awake (inferred) | Active |
 | Daily summary | From 21:00 daily, deferred hourly while driving | Active |
 | Monthly report | 1st of each month at 08:00, previous month | Active |
 
@@ -144,8 +145,10 @@ That line means everything is wired up.
 | `TPMS_THRESHOLD_BAR` | | `2.6` | Tire pressure alert threshold |
 | `LOW_BATTERY_PERCENT` | | `20` | Low battery threshold |
 | `LOW_BATTERY_HOUR` | | `21` | Earliest hour for low battery alerts |
+| `UNLOCK_ALERT_MINUTES` | | `30` | Minutes parked yet still awake before the "possibly unlocked" alert; `0` disables it |
 | `DAILY_SUMMARY_HOUR` | | `21` | Daily summary start hour |
 | `DEFAULT_ELECTRICITY_PRICE` | | empty | Initial price (per kWh) when none is stored |
+| `ENSURE_INDEXES` | | `true` | Add missing TeslaMate v4 B-tree indexes at startup |
 | `DATA_DIR` | | `./data` | Runtime state directory |
 
 ---
@@ -161,6 +164,8 @@ That line means everything is wired up.
 **Charging interruption needs the charge limit.** That value only exists in the live data stream, not in the database. After a restart, if it hasn't arrived yet, interruption can't be detected and the message degrades to a normal "charging complete".
 
 **The daily summary yields to driving.** At 21:00, if you're still driving, it waits until 22:00, 23:00, and so on. If you drive past midnight it retries at 00:00 and 01:00 so the day isn't lost.
+
+**"Possibly unlocked" is inferred, not read.** TeslaMate stores no lock state and MQTT does not publish it. But behavior is a reliable signal: a locked car falls asleep within ~15 minutes, while an unlocked one stays awake waiting for keyless entry. So the rule is "parked long enough + still online + that online stretch started when parking did + not charging". Over 90 days / 198 real parking events, every non-charging stop fell asleep within 30 minutes. Known false positives: sitting in the car with climate or music on, and OTA updates.
 
 ---
 
