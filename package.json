@@ -1,0 +1,36 @@
+{
+  "name": "teslamate-bark",
+  "version": "1.0.0",
+  "description": "把 TeslaMate 的行程、充电、哨兵、胎压事件推送到 Bark，附每日小结与月度报告",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": {
+    "teslamate-bark": "src/index.mjs"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test",
+    "test:watch": "node --test --watch"
+  },
+  "keywords": [
+    "teslamate",
+    "tesla",
+    "bark",
+    "notifications",
+    "mqtt",
+    "self-hosted"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "mqtt": "^5.15.2",
+    "pg": "^8.23.1"
+  }
+}

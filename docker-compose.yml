@@ -1,0 +1,16 @@
+services:
+  teslamate-bark:
+    build: .
+    image: teslamate-bark:local
+    container_name: teslamate-bark
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - bark-data:/data
+    # 如果 TeslaMate 跑在同一个 compose 项目里，把这段网络接上，
+    # 这样 .env 里的 MQTT_URL 与 TESLAMATE_DATABASE_URL 可以用服务名。
+    # networks:
+    #   - teslamate
+
+volumes:
+  bark-data:
