@@ -172,10 +172,6 @@ npm test
 
 Tests cover formatting, dedupe, time boundaries and state machine transitions. No database required.
 
-## Credits
-
-Derived from [tesla-butler](https://github.com/manwithshit/tesla-butler). The state machine and database layer are reused; the Feishu notification path was removed to focus on Bark.
-
 ## License
 
 [MIT](LICENSE)

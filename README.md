@@ -291,10 +291,6 @@ src/
 
 ---
 
-## 致谢
-
-本项目从 [tesla-butler](https://github.com/manwithshit/tesla-butler) 衍生而来，保留了其经过验证的状态机与数据库层，移除了飞书通知路径，聚焦 Bark 单一通道。
-
 ## License
 
 [MIT](LICENSE)
