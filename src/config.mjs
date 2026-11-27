@@ -58,7 +58,11 @@ export const config = Object.freeze({
   tpmsThresholdBar: numberFromEnv("TPMS_THRESHOLD_BAR", 2.6),
   lowBatteryPercent: numberFromEnv("LOW_BATTERY_PERCENT", 20),
   lowBatteryHour: numberFromEnv("LOW_BATTERY_HOUR", 21),
-  dailySummaryHour: numberFromEnv("DAILY_SUMMARY_HOUR", 21)
+  dailySummaryHour: numberFromEnv("DAILY_SUMMARY_HOUR", 21),
+
+  // TeslaMate v4+ 把 positions 的索引换成了 BRIN，按行程/按车查询会退化成全表扫描。
+  // 默认在启动期自动补齐 B-tree 索引；没有建索引权限时可设为 false 关闭。
+  ensureIndexes: process.env.ENSURE_INDEXES !== "false"
 });
 
 export function projectPath(...parts) {

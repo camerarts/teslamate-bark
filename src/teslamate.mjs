@@ -31,6 +31,7 @@ async function runSql(sql, timeout, signal) {
   if (signal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
   const client = await getPool().connect();
   let released = false;
+  let failed = false;
   const release = destroy => {
     if (released) return;
     released = true;
@@ -44,6 +45,9 @@ async function runSql(sql, timeout, signal) {
   if (signal) signal.addEventListener("abort", onAbort, { once: true });
   try {
     await client.query("BEGIN READ ONLY");
+    // PG 18 对高 cost 查询默认启用 JIT，但本项目的查询结果集都很小（几十行），
+    // 编译开销反而成为瓶颈：实测同一条汇总查询 JIT 编译 3.1s、实际执行仅 0.38s。
+    await client.query("SET LOCAL jit = off");
     await client.query(`SET LOCAL statement_timeout='${Math.max(1, timeout - 2_000)}ms'`);
     const result = await client.query(sql);
     await client.query("COMMIT");
@@ -53,11 +57,14 @@ async function runSql(sql, timeout, signal) {
       return typeof value === "object" ? JSON.stringify(value) : String(value);
     }).join("\n");
   } catch (error) {
+    // 事务已进入 aborted 状态或连接不可信：必须销毁连接，不能归还连接池。
+    // 否则坏连接被反复取出，后续所有查询都会连锁失败（DB_PROCESS_FAILED）。
+    failed = true;
     if (error && typeof error === "object" && error.stderr === undefined) error.stderr = String(error.message || "");
     throw error;
   } finally {
     if (signal) signal.removeEventListener("abort", onAbort);
-    release();
+    release(failed);
   }
 }
 
@@ -190,7 +197,13 @@ export async function getCollectionStatus() {
 }
 
 export async function getLatestTrip() {
+  // TeslaMate v4 起 positions 的 drive_id 索引改为 BRIN，按行程取点位会退化为大范围扫描；
+  // 且优化器会把 LATERAL 摊到全部行程上再排序。用 MATERIALIZED 先锁定单条行程，
+  // 实测从 95s 降到 ~15ms。
   return sqlJson(`
+    WITH latest AS MATERIALIZED (
+      SELECT id FROM drives WHERE end_date IS NOT NULL ORDER BY end_date DESC LIMIT 1
+    )
     SELECT COALESCE((
       SELECT json_build_object(
         'id', d.id,
@@ -222,6 +235,7 @@ export async function getLatestTrip() {
         END
       )
       FROM drives d
+      JOIN latest l ON l.id = d.id
       JOIN cars c ON c.id = d.car_id
       LEFT JOIN addresses sa ON sa.id = d.start_address_id
       LEFT JOIN addresses ea ON ea.id = d.end_address_id
@@ -240,9 +254,6 @@ export async function getLatestTrip() {
         ) segments
         WHERE seconds > 0 AND seconds <= 10 AND average_power IS NOT NULL
       ) e ON true
-      WHERE d.end_date IS NOT NULL
-      ORDER BY d.end_date DESC
-      LIMIT 1
     ), 'null'::json);
   `);
 }
@@ -272,23 +283,23 @@ export async function getDriveEnergyTimeline({ since = null, driveIds = null } =
   }
   const selectionClause = selection.length > 0 ? `AND (${selection.join(" OR ")})` : "";
   return sqlJson(`
-    WITH selected_drives AS (
+    WITH selected_drives AS MATERIALIZED (
       SELECT d.*, c.efficiency
       FROM drives d
       JOIN cars c ON c.id = d.car_id
       WHERE d.end_date IS NOT NULL ${selectionClause}
     ), ordered_power AS (
-      SELECT
-        p.drive_id,
-        EXTRACT(EPOCH FROM (
-          lead(p.date) OVER (PARTITION BY p.drive_id ORDER BY p.date, p.id) - p.date
-        )) AS seconds,
-        (p.power::float8 + lead(p.power::float8) OVER (
-          PARTITION BY p.drive_id ORDER BY p.date, p.id
-        )) / 2 AS average_power
-      FROM positions p
-      JOIN selected_drives d ON d.id = p.drive_id
-      WHERE p.power IS NOT NULL
+      -- 同 getPeriodTrips：LATERAL 保证按行程走 drive_id 索引，避免退出成全表扫描。
+      SELECT x.drive_id, x.seconds, x.average_power
+      FROM selected_drives d
+      CROSS JOIN LATERAL (
+        SELECT
+          p.drive_id,
+          EXTRACT(EPOCH FROM (lead(p.date) OVER (ORDER BY p.date, p.id) - p.date)) AS seconds,
+          (p.power::float8 + lead(p.power::float8) OVER (ORDER BY p.date, p.id)) / 2 AS average_power
+        FROM positions p
+        WHERE p.drive_id = d.id AND p.power IS NOT NULL
+      ) x
     ), drive_power AS (
       SELECT
         drive_id,
@@ -662,24 +673,29 @@ function periodBounds(period) {
 export async function getPeriodTrips(period) {
   const { unit, lowerOffset, upperClause } = periodBounds(period);
   return sqlJson(`
-    WITH bounds AS (
+    WITH bounds AS MATERIALIZED (
       SELECT
         ((((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai'))${lowerOffset}) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS since_utc,
         (((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai')) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS until_utc
-    ), selected_drives AS (
+    ), selected_drives AS MATERIALIZED (
       SELECT d.*, c.efficiency
       FROM drives d
       JOIN cars c ON c.id = d.car_id
       CROSS JOIN bounds b
       WHERE d.end_date IS NOT NULL AND d.start_date >= b.since_utc ${upperClause}
     ), ordered_power AS (
-      SELECT
-        p.drive_id,
-        EXTRACT(EPOCH FROM (lead(p.date) OVER (PARTITION BY p.drive_id ORDER BY p.date) - p.date)) AS seconds,
-        (p.power::float8 + lead(p.power::float8) OVER (PARTITION BY p.drive_id ORDER BY p.date)) / 2 AS average_power
-      FROM positions p
-      JOIN selected_drives d ON d.id = p.drive_id
-      WHERE p.power IS NOT NULL
+      -- 用 LATERAL 强制按行程逐条走 drive_id 索引。若写成普通 JOIN，优化器会把
+      -- 实际 3.7k 行估成 361 万行，转而全表扫 positions（923 万行 / ~970MB）。
+      SELECT x.drive_id, x.seconds, x.average_power
+      FROM selected_drives d
+      CROSS JOIN LATERAL (
+        SELECT
+          p.drive_id,
+          EXTRACT(EPOCH FROM (lead(p.date) OVER (ORDER BY p.date) - p.date)) AS seconds,
+          (p.power::float8 + lead(p.power::float8) OVER (ORDER BY p.date)) / 2 AS average_power
+        FROM positions p
+        WHERE p.drive_id = d.id AND p.power IS NOT NULL
+      ) x
     ), drive_power AS (
       SELECT
         drive_id,
@@ -821,7 +837,7 @@ export async function getPeriodCharging(period) {
   const exclusiveUpper = period === "previous_month" || period === "previous_week"
     ? "AND cp.start_date < b.until_utc" : "";
   return sqlJson(`
-    WITH bounds AS (
+    WITH bounds AS MATERIALIZED (
       SELECT
         ((((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai'))${lowerOffset}) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS since_utc,
         (((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai')) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS until_utc
@@ -843,7 +859,7 @@ export async function getPeriodCharging(period) {
 export async function getPeriodRouteCandidates(period) {
   const { unit, lowerOffset, upperClause } = periodBounds(period);
   return sqlJson(`
-    WITH bounds AS (
+    WITH bounds AS MATERIALIZED (
       SELECT
         ((((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai'))${lowerOffset}) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS since_utc,
         (((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai')) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS until_utc
@@ -875,7 +891,7 @@ export async function getPeriodRouteCandidates(period) {
 export async function getPeriodRoute(period) {
   const { unit, lowerOffset, upperClause } = periodBounds(period);
   return sqlJson(`
-    WITH bounds AS (
+    WITH bounds AS MATERIALIZED (
       SELECT
         ((((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai'))${lowerOffset}) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS since_utc,
         (((date_trunc('${unit}', now() AT TIME ZONE 'Asia/Shanghai')) AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC') AS until_utc
@@ -892,4 +908,57 @@ export async function getPeriodRoute(period) {
     ) ORDER BY drive_id, point_no) FILTER (WHERE point_no = 1 OR point_no % 5 = 0), '[]'::json)
     FROM sampled;
   `);
+}
+
+// TeslaMate v4 起把 positions 的索引策略改成了 BRIN（按物理范围索引，体积很小）。
+// 本项目几乎全部查询都是「按 drive_id 取一段点位」或「按 car_id 取最新一条」，
+// BRIN 对这两种访问没有选择性，会退化成全表扫描：实测 923 万行耗时 20~95 秒。
+// 下面在启动期补齐 B-tree 索引。CONCURRENTLY 不阻塞 TeslaMate 写入，
+// 已存在且有效则直接跳过；失败只记录不退出，推送功能不受影响。
+const REQUIRED_INDEXES = [
+  {
+    name: "positions_drive_id_btree_index",
+    sql: "CREATE INDEX CONCURRENTLY IF NOT EXISTS positions_drive_id_btree_index ON public.positions USING btree (drive_id)"
+  },
+  {
+    name: "positions_car_id_date_desc_index",
+    sql: "CREATE INDEX CONCURRENTLY IF NOT EXISTS positions_car_id_date_desc_index ON public.positions USING btree (car_id, date DESC)"
+  }
+];
+
+export async function ensureIndexes({ log = () => {} } = {}) {
+  const client = await getPool().connect();
+  const created = [];
+  const failed = [];
+  try {
+    // 建索引可能耗时数分钟，显式解除超时限制。
+    await client.query("SET statement_timeout = 0");
+    const { rows } = await client.query(`
+      SELECT ic.relname AS name, i.indisvalid AS valid
+      FROM pg_index i
+      JOIN pg_class ic ON ic.oid = i.indexrelid
+      JOIN pg_class it ON it.oid = i.indrelid
+      JOIN pg_namespace n ON n.oid = it.relnamespace
+      WHERE it.relname = 'positions' AND n.nspname = 'public'
+    `);
+    const state = new Map(rows.map(row => [row.name, row.valid]));
+    for (const index of REQUIRED_INDEXES) {
+      if (state.get(index.name) === true) continue;
+      // 上一次 CONCURRENTLY 中断会留下 INVALID 索引，必须先删除再重建。
+      if (state.has(index.name)) {
+        await client.query(`DROP INDEX CONCURRENTLY IF EXISTS ${index.name}`);
+      }
+      try {
+        await client.query(index.sql);
+        created.push(index.name);
+        log(`已补齐索引 ${index.name}`);
+      } catch (error) {
+        failed.push({ name: index.name, message: error.message });
+        log(`索引 ${index.name} 创建失败：${error.message}（不影响推送，可手动执行 ${index.sql}）`);
+      }
+    }
+  } finally {
+    client.release();
+  }
+  return { created, failed };
 }

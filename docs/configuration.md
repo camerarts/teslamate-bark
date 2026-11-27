@@ -133,3 +133,39 @@ DEFAULT_ELECTRICITY_PRICE=0.36
 # 数据
 DATA_DIR=/data
 ```
+
+## 索引自检（TeslaMate v4 及以上）
+
+TeslaMate v4 把 `positions` 表按 `drive_id`、`car_id` 的 B-tree 索引换成了 BRIN
+（`positions_drive_id_date_timestamp_minmax_multi_ops_index` 等）。
+BRIN 体积只有几百 KB，对 TeslaMate 自己按时间范围取数据够用，
+但本项目大量执行「按一趟行程取点位」「按车取最新一条」这类查询，
+BRIN 在这些访问上没有选择性，会退化成整表扫描。
+
+实测（923 万行 `positions`）：
+
+| 查询 | 仅有 BRIN | 补齐 B-tree |
+|---|---|---|
+| 最新行程 | 95 秒 | 40 毫秒 |
+| 每日小结统计 | 18 秒 | 44 毫秒 |
+| 当前车辆状态 | 22 秒 | 22 毫秒 |
+
+程序启动时会在后台检查并补齐这两个索引，**不阻塞推送**，缺权限只记录告警：
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS positions_drive_id_btree_index
+  ON public.positions USING btree (drive_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS positions_car_id_date_desc_index
+  ON public.positions USING btree (car_id, date DESC);
+```
+
+`CONCURRENTLY` 不会阻塞 TeslaMate 写入，但建索引期间会占用额外的磁盘与 IO：
+`positions` 每百万行约需 30 MB 空间，建议留出 500 MB 余量。
+
+如果使用的是只读账号（推荐做法），自动建索引会因权限不足而跳过。
+此时请用数据库管理员账号手动执行上面的 SQL，或把 `ENSURE_INDEXES` 设为 `false`
+关闭自检，避免每次启动重复尝试。
+
+> v3 及更早版本无需处理，其默认索引已经是 B-tree。
+

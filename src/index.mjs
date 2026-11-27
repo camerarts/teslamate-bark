@@ -20,4 +20,14 @@ if (Number.isFinite(config.defaultElectricityPrice) && config.defaultElectricity
   }
 }
 
+// 后台补齐索引，不阻塞推送启动：建索引可能要几分钟，期间推送照常工作。
+if (config.ensureIndexes) {
+  import("./teslamate.mjs")
+    .then(module => module.ensureIndexes({ log }))
+    .then(result => {
+      if (result.created.length > 0) log(`索引补齐完成：${result.created.join("、")}`);
+    })
+    .catch(error => log(`索引检查跳过：${error.message}`));
+}
+
 await import("./worker.mjs");
