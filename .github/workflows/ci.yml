@@ -26,5 +26,21 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      - name: 语法检查
+        # 单测覆盖不到的入口文件也能在这里暴露语法错误
+        run: |
+          for file in src/*.mjs src/lib/*.mjs; do
+            node --check "$file"
+          done
+
       - name: 运行测试
         run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t teslamate-bark:ci .
