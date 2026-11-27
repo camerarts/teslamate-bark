@@ -1,6 +1,6 @@
 {
   "name": "teslamate-bark",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "把 TeslaMate 的行程、充电、哨兵、胎压事件推送到 Bark，附每日小结与月度报告",
   "license": "MIT",
   "type": "module",

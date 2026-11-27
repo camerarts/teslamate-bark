@@ -2,18 +2,18 @@ import { config } from "./config.mjs";
 import { randomUUID } from 'node:crypto';
 import { createEventProcessor, createSerialQueue, safeErrorCode } from './worker-runtime.mjs';
 import { connect } from "mqtt";
-import { sendChargingEvent, sendCompletedTrip, sendDailySummary, sendLowBatteryAlert, sendMonthlyReport, sendSentryEvent, sendTpmsAlert, lowTiresFrom } from "./notify.mjs";
+import { sendChargingEvent, sendCompletedTrip, sendDailySummary, sendLowBatteryAlert, sendMonthlyReport, sendSentryEvent, sendTpmsAlert, sendUnlockedAlert, lowTiresFrom } from "./notify.mjs";
 import { barkDestinationEnabled } from "./bark.mjs";
 import { createSentryMonitor, parseSentryTopic } from "./sentry-monitor.mjs";
 import { ChargingTracker, parseTeslaMateTopic } from "./charging.mjs";
 import { createChargingDatabaseMonitor, deliverPendingChargingEvents } from "./charging-monitor.mjs";
-import { ensureTeslaMate, getDriveGroup, getDriveMonitorSnapshot, getLatestChargingProcess, getLatestTpms, getVehiclePulse } from "./teslamate.mjs";
+import { ensureTeslaMate, getDriveGroup, getDriveMonitorSnapshot, getLatestChargingProcess, getLatestTpms, getParkingState, getVehiclePulse } from "./teslamate.mjs";
 import { appendTripSignal, getRuntimeState, markScheduledPush, saveChargingMonitorState, saveTripMonitorState } from "./store.mjs";
 import { createTripDatabaseMonitor } from "./trip-monitor.mjs";
 import { summarizeTripState, TripSessionTracker, tripBoundaryDefaults } from "./trip-session.mjs";
 import { parseVehicleSignalTopic, tripSignalTopics } from "./vehicle-signals.mjs";
 import { refreshReferenceFuelPrices } from "./fuel-prices.mjs";
-import { dailySummaryTarget, dueScheduledReports } from "./schedule.mjs";
+import { dailySummaryTarget, dueScheduledReports, unlockedAlertFor } from "./schedule.mjs";
 
 let stopping = false;
 const children = new Set();
@@ -148,9 +148,35 @@ async function checkTpms() {
   const fresh = low.filter((tire) => !state.sent?.[`tpms:${tire.key}:${dateKey}`]);
   if (fresh.length === 0) return;
 
-  await sendTpmsAlert(fresh, { key: `${dateKey}-${Date.now()}` });
+  await sendTpmsAlert(fresh, `${dateKey}-${Date.now()}`);
   for (const tire of fresh) await markScheduledPush(`tpms:${tire.key}:${dateKey}`);
   log(`tpms alert sent tires=${fresh.map((tire) => `${tire.label}:${tire.bar}`).join(",")}`);
+}
+
+// 停车后忘记锁车：车辆会一直保持唤醒，不会进入休眠。
+// 判断「停车满 N 分钟 + 当前仍 online + 这段 online 从停车时就开始 + 不在充电」，
+// 每次停车只提醒一次，用 drive_id 做幂等键。
+let lastUnlockedCheckAt = 0;
+async function checkUnlocked() {
+  if (!barkDestinationEnabled()) return;
+  // 查询本身很轻，但 60 秒一问没必要，5 分钟一次足够。
+  if (Date.now() - lastUnlockedCheckAt < 5 * 60_000) return;
+  lastUnlockedCheckAt = Date.now();
+
+  const parking = await getParkingState().catch(() => null);
+  if (!parking) return;
+
+  const alert = unlockedAlertFor(parking, config.unlockedAlertMinutes);
+  if (!alert) return;
+
+  const key = `unlocked:${parking.drive_id}`;
+  const state = await getRuntimeState();
+  if (state.sent?.[key]) return;
+
+  const pulse = await getVehiclePulse().catch(() => null);
+  await sendUnlockedAlert({ ...alert, at_home: Boolean(pulse?.at_home) }, key);
+  await markScheduledPush(key);
+  log(`unlocked alert sent drive=${parking.drive_id} parked=${alert.parked_minutes}min`);
 }
 
 async function deliverChargingQueue(source, at = new Date().toISOString()) {
@@ -340,6 +366,7 @@ async function boot() {
     await checkDailySummary();
     await checkLowBattery();
     await checkTpms();
+    await checkUnlocked();
   }, 'scheduled')
     .catch((error) => log(`scheduler failed code=${safeErrorCode(error)}`));
   schedule();

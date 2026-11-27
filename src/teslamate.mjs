@@ -807,6 +807,51 @@ export async function getVehiclePulse() {
   `, 8_000, { name: 'vehicle_pulse' });
 }
 
+// 停车后的熄火状态。
+//
+// TeslaMate 不记录锁车状态（positions 无 locked 列，MQTT 也不发布），
+// 但车辆行为本身是个可靠信号：锁车后约 15 分钟内必然进入 offline/asleep，
+// 未锁车时车机保持唤醒等待无钥匙进入，会一直停留在 online。
+//
+// 实测本车 90 天 198 次真正停车，排除充电后 100% 在 30 分钟内休眠；
+// 仅有的 27 次「超过 30 分钟仍 online」全部发生在充电过程中。
+// 所以「停车 30 分钟仍 online 且不在充电」基本等价于「没锁车」。
+export async function getParkingState() {
+  return sqlJson(`
+    WITH last_drive AS (
+      SELECT id, end_date
+      FROM drives
+      WHERE end_date IS NOT NULL AND end_date <= now()
+      ORDER BY end_date DESC
+      LIMIT 1
+    ), cur_state AS (
+      SELECT state::text AS state, start_date
+      FROM states
+      ORDER BY start_date DESC
+      LIMIT 1
+    )
+    SELECT COALESCE((
+      SELECT json_build_object(
+        'drive_id', d.id,
+        'parked_at', d.end_date,
+        'parked_minutes', round(extract(epoch from (now() - d.end_date)) / 60),
+        'state', s.state,
+        'state_minutes', round(extract(epoch from (now() - s.start_date)) / 60),
+        'driving', EXISTS (SELECT 1 FROM drives x WHERE x.end_date IS NULL),
+        'charging', EXISTS (SELECT 1 FROM charging_processes cp WHERE cp.end_date IS NULL),
+        -- 刚充完电车辆还会醒一阵，用它排除误判
+        'charge_ended_minutes', (
+          SELECT round(extract(epoch from (now() - max(cp.end_date))) / 60)
+          FROM charging_processes cp
+          WHERE cp.end_date IS NOT NULL AND cp.end_date > now() - interval '3 hours'
+        )
+      )
+      FROM last_drive d
+      CROSS JOIN cur_state s
+    ), 'null'::json);
+  `, 8_000, { name: 'parking_state' });
+}
+
 // 最近一次有胎压数据的记录。用车龄（秒）判断新鲜度，避免时区转换出错。
 export async function getLatestTpms() {
   return sqlJson(`

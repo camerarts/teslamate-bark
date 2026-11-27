@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dailySummaryTarget, dueScheduledReport, dueScheduledReports } from "../src/schedule.mjs";
+import { dailySummaryTarget, dueScheduledReport, dueScheduledReports, unlockedAlertFor } from "../src/schedule.mjs";
 
 test("natural weekly and monthly reports have automatic delivery slots", () => {
   assert.deepEqual(dueScheduledReport({
@@ -107,4 +107,39 @@ test("每日小结在 2–20 点不触发", () => {
   for (const hour of [2, 6, 12, 20]) {
     assert.equal(dailySummaryTarget(hour, "2026-11-27", "2026-11-26"), null, `hour=${hour} 不应触发`);
   }
+});
+
+// 未锁车判断：核心是「停车够久但车辆还没休眠」。
+test("unlocked alert fires only when a parked car stays awake", () => {
+  const base = {
+    driving: false,
+    charging: false,
+    parked_minutes: 35,
+    state: "online",
+    state_minutes: 33,
+    charge_ended_minutes: 200
+  };
+  assert.deepEqual(unlockedAlertFor(base), { parked_minutes: 35, at_home: false });
+});
+
+test("unlocked alert ignores a car that slept, is charging, or just parked", () => {
+  const base = {
+    driving: false, charging: false, parked_minutes: 35,
+    state: "online", state_minutes: 33, charge_ended_minutes: 200
+  };
+  assert.equal(unlockedAlertFor({ ...base, state: "asleep" }), null);
+  assert.equal(unlockedAlertFor({ ...base, state: "offline" }), null);
+  assert.equal(unlockedAlertFor({ ...base, driving: true }), null);
+  assert.equal(unlockedAlertFor({ ...base, charging: true }), null);
+  assert.equal(unlockedAlertFor({ ...base, parked_minutes: 12, state_minutes: 10 }), null);
+});
+
+test("unlocked alert ignores a car woken up after parking or just after charging", () => {
+  const base = {
+    driving: false, charging: false, parked_minutes: 90,
+    state: "online", state_minutes: 60, charge_ended_minutes: 300
+  };
+  assert.equal(unlockedAlertFor(base), null);
+  assert.equal(unlockedAlertFor({ ...base, state_minutes: 90, charge_ended_minutes: 10 }), null);
+  assert.equal(unlockedAlertFor({ ...base, state_minutes: 90 }, 20)?.parked_minutes, 90);
 });

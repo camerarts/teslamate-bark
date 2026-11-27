@@ -56,6 +56,7 @@ export const config = Object.freeze({
 
   // 告警阈值，全部可通过环境变量调整，无需改代码。
   tpmsThresholdBar: numberFromEnv("TPMS_THRESHOLD_BAR", 2.6),
+  unlockedAlertMinutes: numberFromEnv("UNLOCK_ALERT_MINUTES", 30),
   lowBatteryPercent: numberFromEnv("LOW_BATTERY_PERCENT", 20),
   lowBatteryHour: numberFromEnv("LOW_BATTERY_HOUR", 21),
   dailySummaryHour: numberFromEnv("DAILY_SUMMARY_HOUR", 21),

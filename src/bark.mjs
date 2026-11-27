@@ -305,6 +305,18 @@ export function formatTpmsAlert({ tires = [], threshold = 2.6 } = {}) {
   };
 }
 
+// 未锁车提醒。判断依据是「车辆停车后迟迟不休眠」，所以文案按推断口径写，
+// 不直接断言「没锁」，同时给出判断理由，便于用户自己核对。
+export function formatUnlockedAlert(parking = {}) {
+  const minutes = Number(parking.parked_minutes);
+  const lines = [
+    `🕐 已停车 ${Number.isFinite(minutes) ? Math.round(minutes) : "?"} 分钟，车辆仍在唤醒状态`,
+    parking.at_home ? "🏠 停在家附近" : "📍 停在外面",
+    "👉 锁车后车辆通常 15 分钟内休眠，请确认是否已锁"
+  ];
+  return { title: "🔓 车辆可能没锁", body: lines.join("\n") };
+}
+
 export function formatSentryText(kind, context = {}) {
   const clock = context.at ? formatClock(context.at) : null;
   if (kind === "enabled") {

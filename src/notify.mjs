@@ -9,6 +9,7 @@ import {
   formatSentryText,
   formatTpmsAlert,
   formatTripText,
+  formatUnlockedAlert,
   pushBark
 } from "./bark.mjs";
 import { calculateFuelComparisons } from "./comparisons.mjs";
@@ -168,6 +169,13 @@ export function lowTiresFrom(tpms, threshold = config.tpmsThresholdBar) {
 export async function sendTpmsAlert(tires, key = Date.now()) {
   const message = formatTpmsAlert({ tires, threshold: config.tpmsThresholdBar });
   await pushToBark({ ...message, key: `tpms:${key}`, level: "active", sound: "bell" });
+  return { status: "sent", message };
+}
+
+// 停车后长时间不休眠 = 大概率没锁车。每次停车只提醒一次。
+export async function sendUnlockedAlert(parking, key = Date.now()) {
+  const message = formatUnlockedAlert(parking);
+  await pushToBark({ ...message, key: `unlocked:${key}`, level: "active", sound: "minuet" });
   return { status: "sent", message };
 }
 
